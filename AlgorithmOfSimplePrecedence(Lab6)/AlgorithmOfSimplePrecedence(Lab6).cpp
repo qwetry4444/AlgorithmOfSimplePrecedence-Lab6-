@@ -2,6 +2,8 @@
 #include <iostream>
 #include <string>
 #include <stack>
+#include <unordered_map>
+#include <bitset>
 
 #define MAX_ID_LEN 32
 #define MAX_STACK_LEN 250
@@ -11,26 +13,31 @@ typedef enum Relation
 	None = ' ', Before = '<', Together = '=', After = '>', Dual = '%'
 } Relation;
 
+enum Action
+{
+	Shift, Reduce, Stop, Error
+};
+
 struct Symbol
 {
 	char symbol;
 	Relation rel;
 	std::string id;
-	int value;
+	unsigned value;
 
-	Symbol(char _symbol, Relation _rel, std::string _id, int _value) : symbol(_symbol), rel(_rel), id(_id), value(_value) {}
+	Symbol(char _symbol, Relation _rel, std::string _id, unsigned _value) : symbol(_symbol), rel(_rel), id(_id), value(_value) {}
 	Symbol() : symbol('\0'), rel(Relation{}), id(""), value(0) {}
 };
 
 std::string Native = "=;|&~()";
 
-FILE* fi = 0;
-FILE* fo = 0;
+FILE* fi, *fo, *foTriads;
 int cc = 0;   
 Symbol c;    
 
 
 std::stack<Symbol> stack;
+
 
 void printStack() {
 	fprintf(fo, "Содержимое стека:\n");
@@ -40,7 +47,7 @@ void printStack() {
 		stack.pop();
 	}
 }
-const char alpabet[] = "LSETMIC=|&~();#";
+const char alpabet[] = "LSETM=;|&~()IC#";
 
 typedef struct Rule
 {
@@ -54,8 +61,8 @@ Rule rules[] =
 	{'L', "LS"}, {'L', "S"},
 	{'S', "I=E;"},
 	{'E', "E|T"}, {'E', "T"},
-	{'T', "T&M"}, {'T', "M"},
-	{'M', "~M"}, {'M', "(E)"}, {'M', "I"}, {'M', "C"}
+	{'T', "T&M"}, {'M', "~M"}, {'T', "M"},
+	 {'M', "(E)"}, {'M', "I"}, {'M', "C"}
 };
 
 Relation matrix[15][15] = 
@@ -77,7 +84,43 @@ Relation matrix[15][15] =
 	{Dual, Before, None, None, None, None, None, None, None, None, None, None, Before, None, None }
 };
 
-void Error(const char* msg, const char* param)
+
+int triadNumber = 1;
+struct Triad {
+	int number;
+	char operation;
+	std::string operand1;
+	std::string operand2;
+
+	Triad(char _operation, std::string _operand1, std::string _operand2)
+		: number(triadNumber), operation(_operation), operand1(_operand1), operand2(_operand2) { }
+
+	Triad() {}
+};
+std::unordered_map<int, Triad> triads;
+
+std::string toBinary(unsigned number) {
+	int bitCount = (number == 0) ? 1 : static_cast<int>(std::log2(number)) + 1;
+	return std::bitset<32>(number).to_string().substr(32 - bitCount);
+}
+
+void fprintfTriad(Triad triad) {
+	fprintf(foTriads, "%d:\t%c(%s, %s)\n", triad.number, triad.operation, triad.operand1.c_str(), triad.operand2.c_str());
+}
+
+void fprintfTriads() {
+	for (const auto& [key, value] : triads) {
+		fprintfTriad(value);
+	}
+}
+
+void addTriad(Triad triad) {
+	triads[triad.number] = triad;
+	triadNumber++;
+}
+
+
+void OnError(const char* msg, const char* param)
 {
 	printf("\nError: ");
 	printf(msg);
@@ -94,31 +137,31 @@ void Get(void)
 
 Symbol GetLex(void)
 {
-	while (isspace(cc)) Get();
 	c = Symbol();
+	while (isspace(cc)) Get();
 	if (isalpha(cc) || cc == '_')
 	{
 		c.id = cc;
 		Get();
-		while (isalnum(cc) || cc == '_')
+		while (cc == '0' || cc == '1')
 		{
 			c.id += cc;
 			Get();
 		}
 		c.symbol = 'I';
 	}
-	else if (isdigit(cc))
+	else if (cc == '0' || cc == '1')
 	{
 		std::string buffer;
 		buffer = cc;
 		Get();
-		while (isdigit(cc))
+		while (cc == '0' || cc == '1')
 		{
 			buffer += cc;
 			Get();
 		}
-		c.value = std::stoi(buffer, nullptr, 2);
 		c.symbol = 'C';
+		c.value = std::stoi(buffer, nullptr, 2);
 	}
 	else if (Native.find(cc) != std::string::npos)
 	{
@@ -128,8 +171,7 @@ Symbol GetLex(void)
 	else if (cc == EOF)
 		c.symbol = '#';
 	else
-		Error("Unknown symbol \'%s\'\n", (char*)&cc);
-	stack.push(c);
+		OnError("Unknown symbol \'%s\'\n", (char*)&cc);
 	return c;
 }
 
@@ -149,93 +191,154 @@ int charIndex(char c)
 	if (t)
 		return t - alpabet;
 	else
-		Error("Unknown symbol", NULL);
+		OnError("Unknown symbol", NULL);
 }
 
-Relation f(char x, char y)
+Relation getRelation(char x, char y)
 {
 	return matrix[charIndex(x)][charIndex(y)];
 }
 
-int g()
-{
-	std::string buffer;
-	buffer = c.symbol;
-	while (stack.top().rel != Before) {
-		buffer = stack.top().symbol + buffer;
+
+void OnReduce(int ruleNumber) {
+	Symbol newSymbol = stack.top();
+	Symbol t;
+	Symbol e;
+	Symbol i;
+	Symbol m;
+	switch (ruleNumber)
+	{
+	case 0:
+		break;	
+
+	case 1:
+		newSymbol.symbol = 'L';
 		stack.pop();
+		stack.pop();
+		break;
+
+	case 2:
+		newSymbol = stack.top();
+		newSymbol.symbol = 'L';
+		stack.pop();
+		break;
+
+	case 3:
+		newSymbol.symbol = 'S';
+		stack.pop();
+		e = stack.top();
+		stack.pop();
+		stack.pop();
+		i = stack.top();
+		stack.pop();
+		newSymbol.id = i.id;
+		newSymbol.value = e.value;
+		addTriad(Triad('=', i.id, toBinary(e.value)));
+		break;
+	
+	case 4:
+		newSymbol.symbol = 'E';
+		t = stack.top();
+		stack.pop();
+		stack.pop();
+		e = stack.top();
+		stack.pop();
+		newSymbol.value = t.value | e.value;
+		addTriad(Triad('|', std::to_string(e.value), std::to_string(t.value)));
+		break;
+
+	case 5:
+		newSymbol.symbol = 'E';
+		stack.pop();
+		break;
+
+	case 6:
+		newSymbol.symbol = 'T';
+		m = stack.top();
+		stack.pop();
+		t = stack.top();
+		stack.pop();
+		newSymbol.value = m.value & t.value;
+		addTriad(Triad('&', std::to_string(m.value), std::to_string(t.value)));
+		break;
+
+	case 7:
+		newSymbol.symbol = 'M';
+		m = stack.top();
+		stack.pop();
+		stack.pop();
+		newSymbol.value = ~m.value;
+		if (m.id.empty())
+			addTriad(Triad('~', toBinary(m.value), "¤"));
+		else
+			addTriad(Triad('~', m.id, "¤"));
+		break;
+
+	case 8:
+		newSymbol.symbol = 'T';
+		stack.pop();
+		break;
+
+	case 9:
+		newSymbol.symbol = 'M';
+		stack.pop();
+		e = stack.top();
+		stack.pop();
+		newSymbol.value = e.value;
+		break;
+
+	case 10:
+		newSymbol = stack.top();
+		newSymbol.symbol = 'M';
+		stack.pop();
+		addTriad(Triad('V', newSymbol.id, "¤"));
+		break;
+
+	case 11:
+		newSymbol = stack.top();
+		newSymbol.symbol = 'M';
+		stack.pop();
+		addTriad(Triad('C', toBinary(newSymbol.value), "¤"));
+		break;
 	}
 
-	for (size_t i = 0; i < std::size(rules); i++) {
-		if (rules[i].right == buffer) {
-			return static_cast<int>(i);
+	newSymbol.rel = getRelation(stack.top().symbol, newSymbol.symbol);
+	stack.push(newSymbol);
+}
+
+int g() {
+	std::string omega;
+
+	std::stack<Symbol> tempStack = stack;
+	while (!tempStack.empty()) {
+		omega = tempStack.top().symbol + omega;
+		tempStack.pop();
+	}
+
+	for (int i = 0; i < std::size(rules); ++i) {
+		if (omega.size() >= rules[i].right.size() &&
+			omega.substr(omega.size() - rules[i].right.size()) == rules[i].right) {
+			return i;
 		}
 	}
+
 	return -1;
 }
 
-/* функция свертки (в стеке) */
-
-/* функция семантики */
-
-//n = g(y);
-//
-//switch (n)
-//{
-//case 1: /* E+T */
-//	z.value = e.value + t.value; /* e and t - symbols from stack,
-//												 z - new symbol that will pushed to stack */
-//	break;
-//	/* ... */
-//}
-//Rule rules[] =
-//{
-//	{'_', "#L#"},
-//	{'L', "LS"}, {'L', "S"},
-//	{'S', "I=E;"},
-//	{'E', "E|T"}, {'E', "T"},
-//	{'T', "T&M"}, {'T', "M"},
-//	{'M', "~M"}, {'M', "(E)"}, {'M', "I"}, {'M', "C"}
-//};
-
-void Convolution() {
-
-}
-
-
-
-void Semantics(int ruleNumber) {
-	switch (ruleNumber)
-	{
-	case 1:
-		break;	
-	case 2:
-
-
-	case 3:
-		c.symbol = 'L';
-		c.rel = f(stack.top().symbol, c.symbol);
-		break;
-	case 6:
-		c.symbol = 'E';
-		c.rel = f(stack.top().symbol, c.symbol);
-		break;
-	case 8:
-		c.symbol = 'T';
-		c.rel = f(stack.top().symbol, c.symbol);
-		break;
-	case 11:
-	case 12:
-		c.symbol = 'M';
-		c.rel = f(stack.top().symbol, c.symbol);
-		break;
-
-	default:
-		break;
+Action f() {
+	if (stack.top().symbol == 'L' && c.symbol == '#') {
+		return Stop;
+	}
+	if (c.rel == None) {
+		return Action::Error;
+	}
+	if (c.rel == Before || c.rel == Together || c.rel == Dual) {
+		return Shift;
+	}
+	if (c.rel == After) {
+		return Action::Reduce;
 	}
 }
-
-
 
 int main()
 {
@@ -245,40 +348,56 @@ int main()
 		fprintf(stderr, "Input file open error.\n");
 		return 1;
 	}
-	fo = fopen("test1_result.txt", "wb");
-	if (!fo)
+
+	foTriads = fopen("test1_resultTriads.txt", "wb");
+	if (!foTriads)
 	{
 		fprintf(stderr, "Output file open error.\n");
-		return 2;
+		return 3;
 	}
-	RunScanner();
-	printStack();
 
-	//int ruleNumber;
-	//stack.push(Symbol('#', None, "", 0));
-	//GetLex();
-	//do {
-	//	c.rel = f(stack.top().symbol, c.symbol);
+	
 
-	//	if (stack.top().symbol = 'S' && c.symbol == '#') {
+	Action currentAction;
+	int ruleNumber;
+	bool skipNextGetLex = false;
+	bool exitLoop = false;
 
-	//	}
+	stack.push(Symbol('#', None, "", 0));
+	Get();
+	
+	do {
+		if (!skipNextGetLex) {
+			GetLex(); 
+			c.rel = getRelation(stack.top().symbol, c.symbol);
+		}
+		skipNextGetLex = false; 
+		currentAction = f();
+		
 
-	//	if (c.rel == None) {
-	//		Error("Wrong syntax", NULL);
-	//	}
+		switch (currentAction)
+		{
+		case Action::Shift:
+			stack.push(c);
+			break;
+		case Action::Reduce:
+			ruleNumber = g();
+			if (ruleNumber == -1) {
+				OnError("No rule", NULL);
+			}
+			OnReduce(ruleNumber);
+			c.rel = getRelation(stack.top().symbol, c.symbol);
+			skipNextGetLex = true;
+			break;
+		case Action::Stop:
+			exitLoop = true;
+			break;
+		case Action::Error:
+			OnError("No relation", NULL);
+			break;
+		}
+	} while (!exitLoop);
 
-	//	if (c.rel == Before || c.rel == Together) {
-	//		stack.push(c);
-	//	}
-
-	//	if (c.rel == After) {
-	//		ruleNumber = g();
-	//		if (ruleNumber == -1) {
-	//			Error("Wrong syntax", NULL);
-	//		}
-	//		Semantics(ruleNumber);
-	//	}
-	//} while (GetLex().symbol != '#');
+	fprintfTriads();
 }
 

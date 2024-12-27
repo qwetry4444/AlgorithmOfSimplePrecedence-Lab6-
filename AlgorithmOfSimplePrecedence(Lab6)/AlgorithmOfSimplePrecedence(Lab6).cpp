@@ -6,8 +6,6 @@
 #include <bitset>
 
 
-
-
 typedef enum Relation
 {
 	None = ' ', Before = '<', Together = '=', After = '>', Dual = '%'
@@ -24,7 +22,8 @@ struct Symbol
 	Relation rel;
 	std::string id;
 	unsigned value;
-
+	int triadNumber = 0;
+	// Добавить поле номера триады
 	Symbol(char _symbol, Relation _rel, std::string _id, unsigned _value) : symbol(_symbol), rel(_rel), id(_id), value(_value) {}
 	Symbol() : symbol('\0'), rel(Relation{}), id(""), value(0) {}
 };
@@ -52,7 +51,7 @@ Rule rules[] =
 	{'S', "I=E;"},
 	{'E', "E|T"}, {'E', "T"},
 	{'T', "T&M"}, {'M', "~M"}, {'T', "M"},
-	 {'M', "(E)"}, {'M', "I"}, {'M', "C"}
+	{'M', "(E)"}, {'M', "I"}, {'M', "C"}
 };
 
 Relation matrix[15][15] = 
@@ -87,6 +86,8 @@ struct Triad {
 
 	Triad() : number(triadNumber) {}
 };
+
+std::unordered_map<std::string, unsigned> variables;
 std::unordered_map<int, Triad> triads;
 
 void addTriad(Triad triad) {
@@ -99,8 +100,6 @@ void fprintfTriads();
 void fprintfTriad(Triad triad);
 std::string toBinary(unsigned number);
 void OpenFile(FILE*& file, const char* fileName, const char* mode, const char* errorMessage);
-
-
 
 
 void Get(void)
@@ -127,7 +126,8 @@ void GetLex(void)
 			Get();
 		}
 		c.symbol = 'I';
-		addTriad(Triad('V', c.id, "¤"));
+		//addTriad(Triad('V', c.id, "¤"));
+		//Добавить переменную в список перменных
 	}
 	else if (cc == '0' || cc == '1')
 	{
@@ -139,7 +139,8 @@ void GetLex(void)
 			buffer += cc;
 			Get();
 		}
-		addTriad(Triad('C', buffer, "¤"));
+		
+		//addTriad(Triad('C', buffer, "¤"));
 		c.symbol = 'C';
 		c.value = std::stoi(buffer, nullptr, 2);
 	}
@@ -151,7 +152,7 @@ void GetLex(void)
 	else if (cc == EOF)
 		c.symbol = '#';
 	else
-		OnError("Unknown symbol \'%c\'\n", (char*)&cc);
+		OnError("Unknown symbol\n", NULL);
 	fprintf(foScanner, "%c", c.symbol);
 }
 
@@ -207,10 +208,18 @@ void OnReduce(int ruleNumber) {
 		i = stack.top();
 		stack.pop(); // Удаляем I
 
+		if (variables.count(i.id) != 0) {
+			variables[i.id] = e.value;
+		}
+
 		newSymbol.id = i.id;
 		newSymbol.value = e.value;
 
-		addTriad(Triad('=', i.id, toBinary(e.value)));
+		triad = Triad();
+		triad.operation = '=';
+		triad.operand1 = i.id;
+		triad.operand2 = !e.id.empty() ? e.id : toBinary(e.value);
+		addTriad(triad);
 		break;
 
 	case 4:  // E -> E|T
@@ -232,7 +241,8 @@ void OnReduce(int ruleNumber) {
 	case 5:  // E -> T
 		newSymbol.symbol = 'E';
 		t = stack.top();
-		newSymbol.value = t.value;
+		if (!t.id.empty()) newSymbol.id = t.id;
+		if (t.id.empty()) newSymbol.value = t.value;
 		stack.pop(); // Удаляем T
 		break;
 
@@ -283,10 +293,15 @@ void OnReduce(int ruleNumber) {
 		break;
 
 	case 10: // M -> I
+		newSymbol = stack.top();
+		newSymbol.symbol = 'M';
+		stack.pop(); // Удаляем I или C
+		addTriad(Triad('V', c.id, "¤"));
 	case 11: // M -> C
 		newSymbol = stack.top();
 		newSymbol.symbol = 'M';
 		stack.pop(); // Удаляем I или C
+		addTriad(Triad('C', toBinary(c.value), "¤"));
 		break;
 
 	default:
@@ -305,21 +320,40 @@ void OnReduce(int ruleNumber) {
 
 int g() {
 	std::string omega;
-
+	int currentRuleNumber = -1;
 	std::stack<Symbol> tempStack = stack;
-	while (!tempStack.empty()) {
+	Symbol stackTop = tempStack.top();
+	
+	do {
 		omega = tempStack.top().symbol + omega;
-		tempStack.pop();
-	}
-
-	for (int i = 0; i < std::size(rules); ++i) {
-		if (omega.size() >= rules[i].right.size() &&
-			omega.substr(omega.size() - rules[i].right.size()) == rules[i].right) {
-			return i;
+		if (stackTop.rel == Dual || stackTop.rel == Before) {
+			for (int i = 0; i < std::size(rules); i++) {
+				if (omega == rules[i].right) {
+					currentRuleNumber = i;
+				}
+			}
 		}
-	}
 
-	return -1;
+		tempStack.pop();
+	} while (!tempStack.empty() && stackTop.rel != Before);
+		
+	return currentRuleNumber;
+
+	//std::stack<Symbol> tempStack = stack;
+	//while (!tempStack.empty()) {
+	//	omega = tempStack.top().symbol + omega;
+	//	tempStack.pop();
+	//}
+	// Последовательное считывание элементов с вершины
+	// стека при обнаружении <= сохранить метку, продолжить считывание 
+	// при выходе за макс размер правила вернуться в сохраненной метке
+
+	//for (int i = 0; i < std::size(rules); ++i) {
+	//	if (omega.size() >= rules[i].right.size() &&
+	//		omega.substr(omega.size() - rules[i].right.size()) == rules[i].right) {
+	//		return i;
+	//	}
+	//}
 }
 
 Action f() {
@@ -389,9 +423,6 @@ int main()
 	} while (!exitLoop);
 	fprintfTriads();
 }
-
-
-
 
 
 void OpenFile(FILE*& file, const char* fileName, const char* mode, const char* errorMessage) {

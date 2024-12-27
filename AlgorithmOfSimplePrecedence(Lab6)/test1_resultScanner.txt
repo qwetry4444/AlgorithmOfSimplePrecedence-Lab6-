@@ -1,10 +1,2 @@
 I=C;
-I=C|C;
-I=C&C;
-I=~C;
-I=I;
-I=~C|I;
-I=C|C|C;
-I=I|I;
-I=I&I;
-I=~(C|C);#
+I

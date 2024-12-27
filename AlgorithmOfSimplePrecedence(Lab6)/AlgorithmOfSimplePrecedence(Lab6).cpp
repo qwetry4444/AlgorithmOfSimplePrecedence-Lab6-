@@ -338,7 +338,7 @@ int g() {
 	} while (!tempStack.empty() && stackTop.rel != Before);
 		
 	return currentRuleNumber;
-
+	//Rule not for all 
 	//std::stack<Symbol> tempStack = stack;
 	//while (!tempStack.empty()) {
 	//	omega = tempStack.top().symbol + omega;

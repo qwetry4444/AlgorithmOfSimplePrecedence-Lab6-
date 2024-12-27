@@ -5,8 +5,8 @@
 #include <unordered_map>
 #include <bitset>
 
-#define MAX_ID_LEN 32
-#define MAX_STACK_LEN 250
+
+
 
 typedef enum Relation
 {
@@ -29,25 +29,15 @@ struct Symbol
 	Symbol() : symbol('\0'), rel(Relation{}), id(""), value(0) {}
 };
 
-std::string Native = "=;|&~()";
-
-FILE* fi, *fo, *foTriads;
-int cc = 0;   
-Symbol c;    
-
-
 std::stack<Symbol> stack;
 
-
-void printStack() {
-	fprintf(fo, "Содержимое стека:\n");
-	while (!stack.empty()) {
-		const Symbol& top = stack.top();
-		fprintf(fo, "%c: %s = %d\n", top.symbol, top.id.c_str(), top.value); 
-		stack.pop();
-	}
-}
+std::string Native = "=;|&~()";
 const char alpabet[] = "LSETM=;|&~()IC#";
+
+FILE* fi, * foScanner, * foTriads;
+int cc = 0;
+Symbol c;
+
 
 typedef struct Rule
 {
@@ -95,50 +85,38 @@ struct Triad {
 	Triad(char _operation, std::string _operand1, std::string _operand2)
 		: number(triadNumber), operation(_operation), operand1(_operand1), operand2(_operand2) { }
 
-	Triad() {}
+	Triad() : number(triadNumber) {}
 };
 std::unordered_map<int, Triad> triads;
-
-std::string toBinary(unsigned number) {
-	int bitCount = (number == 0) ? 1 : static_cast<int>(std::log2(number)) + 1;
-	return std::bitset<32>(number).to_string().substr(32 - bitCount);
-}
-
-void fprintfTriad(Triad triad) {
-	fprintf(foTriads, "%d:\t%c(%s, %s)\n", triad.number, triad.operation, triad.operand1.c_str(), triad.operand2.c_str());
-}
-
-void fprintfTriads() {
-	for (const auto& [key, value] : triads) {
-		fprintfTriad(value);
-	}
-}
 
 void addTriad(Triad triad) {
 	triads[triad.number] = triad;
 	triadNumber++;
 }
 
+void OnError(const char* msg, const char* param);
+void fprintfTriads();
+void fprintfTriad(Triad triad);
+std::string toBinary(unsigned number);
+void OpenFile(FILE*& file, const char* fileName, const char* mode, const char* errorMessage);
 
-void OnError(const char* msg, const char* param)
-{
-	printf("\nError: ");
-	printf(msg);
-	printf("\n");
-	fclose(fi);
-	fclose(fo);
-	exit(7);
-}
+
+
 
 void Get(void)
 {
 	cc = fgetc(fi);
 }
 
-Symbol GetLex(void)
+void GetLex(void)
 {
 	c = Symbol();
-	while (isspace(cc)) Get();
+
+	while (isspace(cc)) {
+		fprintf(foScanner, "%c", cc);
+		Get();
+	}
+
 	if (isalpha(cc) || cc == '_')
 	{
 		c.id = cc;
@@ -149,6 +127,7 @@ Symbol GetLex(void)
 			Get();
 		}
 		c.symbol = 'I';
+		addTriad(Triad('V', c.id, "¤"));
 	}
 	else if (cc == '0' || cc == '1')
 	{
@@ -160,6 +139,7 @@ Symbol GetLex(void)
 			buffer += cc;
 			Get();
 		}
+		addTriad(Triad('C', buffer, "¤"));
 		c.symbol = 'C';
 		c.value = std::stoi(buffer, nullptr, 2);
 	}
@@ -171,18 +151,10 @@ Symbol GetLex(void)
 	else if (cc == EOF)
 		c.symbol = '#';
 	else
-		OnError("Unknown symbol \'%s\'\n", (char*)&cc);
-	return c;
+		OnError("Unknown symbol \'%c\'\n", (char*)&cc);
+	fprintf(foScanner, "%c", c.symbol);
 }
 
-void RunScanner(void)
-{
-	Get();
-	do
-	{
-		GetLex();
-	} while (c.symbol != '#');
-}
 
 int charIndex(char c)
 {
@@ -201,108 +173,133 @@ Relation getRelation(char x, char y)
 
 
 void OnReduce(int ruleNumber) {
-	Symbol newSymbol = stack.top();
-	Symbol t;
-	Symbol e;
-	Symbol i;
-	Symbol m;
-	switch (ruleNumber)
-	{
-	case 0:
-		break;	
-
-	case 1:
-		newSymbol.symbol = 'L';
-		stack.pop();
-		stack.pop();
-		break;
-
-	case 2:
-		newSymbol = stack.top();
-		newSymbol.symbol = 'L';
-		stack.pop();
-		break;
-
-	case 3:
-		newSymbol.symbol = 'S';
-		stack.pop();
-		e = stack.top();
-		stack.pop();
-		stack.pop();
-		i = stack.top();
-		stack.pop();
-		newSymbol.id = i.id;
-		newSymbol.value = e.value;
-		addTriad(Triad('=', i.id, toBinary(e.value)));
-		break;
-	
-	case 4:
-		newSymbol.symbol = 'E';
-		t = stack.top();
-		stack.pop();
-		stack.pop();
-		e = stack.top();
-		stack.pop();
-		newSymbol.value = t.value | e.value;
-		addTriad(Triad('|', std::to_string(e.value), std::to_string(t.value)));
-		break;
-
-	case 5:
-		newSymbol.symbol = 'E';
-		stack.pop();
-		break;
-
-	case 6:
-		newSymbol.symbol = 'T';
-		m = stack.top();
-		stack.pop();
-		t = stack.top();
-		stack.pop();
-		newSymbol.value = m.value & t.value;
-		addTriad(Triad('&', std::to_string(m.value), std::to_string(t.value)));
-		break;
-
-	case 7:
-		newSymbol.symbol = 'M';
-		m = stack.top();
-		stack.pop();
-		stack.pop();
-		newSymbol.value = ~m.value;
-		if (m.id.empty())
-			addTriad(Triad('~', toBinary(m.value), "¤"));
-		else
-			addTriad(Triad('~', m.id, "¤"));
-		break;
-
-	case 8:
-		newSymbol.symbol = 'T';
-		stack.pop();
-		break;
-
-	case 9:
-		newSymbol.symbol = 'M';
-		stack.pop();
-		e = stack.top();
-		stack.pop();
-		newSymbol.value = e.value;
-		break;
-
-	case 10:
-		newSymbol = stack.top();
-		newSymbol.symbol = 'M';
-		stack.pop();
-		addTriad(Triad('V', newSymbol.id, "¤"));
-		break;
-
-	case 11:
-		newSymbol = stack.top();
-		newSymbol.symbol = 'M';
-		stack.pop();
-		addTriad(Triad('C', toBinary(newSymbol.value), "¤"));
-		break;
+	if (ruleNumber < 0 || ruleNumber >= std::size(rules)) {
+		OnError("Invalid rule number", nullptr);
+		return;
 	}
 
-	newSymbol.rel = getRelation(stack.top().symbol, newSymbol.symbol);
+	Symbol newSymbol;
+	Symbol t, e, i, m;
+	Triad triad;
+
+	switch (ruleNumber) {
+	case 0:
+		return;
+
+	case 1:  // L -> LS
+		newSymbol.symbol = 'L';
+		stack.pop(); // Удаляем S
+		stack.pop(); // Удаляем L
+		break;
+
+	case 2:  // L -> S
+		newSymbol = stack.top();
+		newSymbol.symbol = 'L';
+		stack.pop(); // Удаляем S
+		break;
+
+	case 3:  // S -> I=E;
+		newSymbol.symbol = 'S';
+		stack.pop(); // Удаляем ';'
+		e = stack.top();
+		stack.pop(); // Удаляем E
+		stack.pop(); // Удаляем '='
+		i = stack.top();
+		stack.pop(); // Удаляем I
+
+		newSymbol.id = i.id;
+		newSymbol.value = e.value;
+
+		addTriad(Triad('=', i.id, toBinary(e.value)));
+		break;
+
+	case 4:  // E -> E|T
+		newSymbol.symbol = 'E';
+		t = stack.top();
+		stack.pop(); // Удаляем T
+		stack.pop(); // Удаляем '|'
+		e = stack.top();
+		stack.pop(); // Удаляем E
+
+		newSymbol.value = t.value | e.value;
+
+		triad = Triad('|',
+			e.id.empty() ? toBinary(e.value) : e.id,
+			t.id.empty() ? toBinary(t.value) : t.id);
+		addTriad(triad);
+		break;
+
+	case 5:  // E -> T
+		newSymbol.symbol = 'E';
+		t = stack.top();
+		newSymbol.value = t.value;
+		stack.pop(); // Удаляем T
+		break;
+
+	case 6:  // T -> T&M
+		newSymbol.symbol = 'T';
+		m = stack.top();
+		stack.pop(); // Удаляем M
+		stack.pop(); // Удаляем '&'
+		t = stack.top();
+		stack.pop(); // Удаляем T
+
+		newSymbol.value = m.value & t.value;
+
+		triad = Triad('&',
+			t.id.empty() ? toBinary(t.value) : t.id,
+			m.id.empty() ? toBinary(m.value) : m.id);
+		addTriad(triad);
+		break;
+
+	case 7:  // M -> ~M
+		newSymbol.symbol = 'M';
+		m = stack.top();
+		stack.pop(); // Удаляем M
+		stack.pop(); // Удаляем '~'
+
+		newSymbol.value = ~m.value;
+
+		triad = Triad('~',
+			m.id.empty() ? toBinary(m.value) : m.id,
+			"¤");
+		addTriad(triad);
+		break;
+
+	case 8:  // T -> M
+		newSymbol.symbol = 'T';
+		m = stack.top();
+		newSymbol.value = m.value;
+		stack.pop(); // Удаляем M
+		break;
+
+	case 9:  // M -> (E)
+		newSymbol.symbol = 'M';
+		stack.pop(); // Удаляем ')'
+		e = stack.top();
+		stack.pop(); // Удаляем E
+		stack.pop(); // Удаляем '('
+		newSymbol.value = e.value;
+		break;
+
+	case 10: // M -> I
+	case 11: // M -> C
+		newSymbol = stack.top();
+		newSymbol.symbol = 'M';
+		stack.pop(); // Удаляем I или C
+		break;
+
+	default:
+		OnError("Wrong rule number", nullptr);
+		return;
+	}
+	
+	if (!stack.empty()) {
+		newSymbol.rel = getRelation(stack.top().symbol, newSymbol.symbol);
+	}
+	else {
+		newSymbol.rel = None;
+	}
 	stack.push(newSymbol);
 }
 
@@ -340,64 +337,92 @@ Action f() {
 	}
 }
 
+void ProcessAction(Action currentAction, bool& skipNextGetLex, bool& exitLoop, int& ruleNumber) {
+	switch (currentAction) {
+	case Action::Shift:
+		stack.push(c);
+		break;
+
+	case Action::Reduce:
+		ruleNumber = g();
+		if (ruleNumber == -1) {
+			OnError("No rule", NULL);
+		}
+		OnReduce(ruleNumber);
+		c.rel = getRelation(stack.top().symbol, c.symbol);
+		skipNextGetLex = true;
+		break;
+
+	case Action::Stop:
+		exitLoop = true;
+		break;
+
+	case Action::Error:
+		OnError("No relation", NULL);
+		break;
+	}
+}
+
 int main()
 {
-	fi = fopen("test1.txt", "rb");
-	if (!fi)
-	{
-		fprintf(stderr, "Input file open error.\n");
-		return 1;
-	}
-
-	foTriads = fopen("test1_resultTriads.txt", "wb");
-	if (!foTriads)
-	{
-		fprintf(stderr, "Output file open error.\n");
-		return 3;
-	}
-
-	
+	OpenFile(fi, "test1.txt", "rb", "Input file open error.");
+	OpenFile(foScanner, "test1_resultScanner.txt", "wb", "Output file open error.");
+	OpenFile(foTriads, "test1_resultTriads.txt", "wb", "Output file open error.");
 
 	Action currentAction;
-	int ruleNumber;
+	int ruleNumber = -1;
 	bool skipNextGetLex = false;
 	bool exitLoop = false;
 
 	stack.push(Symbol('#', None, "", 0));
 	Get();
-	
+
 	do {
 		if (!skipNextGetLex) {
-			GetLex(); 
+			GetLex();
 			c.rel = getRelation(stack.top().symbol, c.symbol);
 		}
-		skipNextGetLex = false; 
+		skipNextGetLex = false;
 		currentAction = f();
-		
 
-		switch (currentAction)
-		{
-		case Action::Shift:
-			stack.push(c);
-			break;
-		case Action::Reduce:
-			ruleNumber = g();
-			if (ruleNumber == -1) {
-				OnError("No rule", NULL);
-			}
-			OnReduce(ruleNumber);
-			c.rel = getRelation(stack.top().symbol, c.symbol);
-			skipNextGetLex = true;
-			break;
-		case Action::Stop:
-			exitLoop = true;
-			break;
-		case Action::Error:
-			OnError("No relation", NULL);
-			break;
-		}
+		ProcessAction(currentAction, skipNextGetLex, exitLoop, ruleNumber);
 	} while (!exitLoop);
-
 	fprintfTriads();
 }
 
+
+
+
+
+void OpenFile(FILE*& file, const char* fileName, const char* mode, const char* errorMessage) {
+	file = fopen(fileName, mode);
+	if (!file) {
+		throw std::runtime_error(errorMessage);
+	}
+}
+
+std::string toBinary(unsigned number) {
+	int bitCount = (number == 0) ? 1 : static_cast<int>(std::log2(number)) + 1;
+	return std::bitset<32>(number).to_string().substr(32 - bitCount);
+}
+
+void fprintfTriad(Triad triad) {
+	fprintf(foTriads, "%d:\t%c(%s, %s)\n", triad.number, triad.operation, triad.operand1.c_str(), triad.operand2.c_str());
+}
+
+void fprintfTriads() {
+	for (const auto& [key, value] : triads) {
+		fprintfTriad(value);
+	}
+}
+
+void OnError(const char* msg, const char* param)
+{
+	printf("\nError: ");
+	printf(msg);
+	printf("\n");
+	fclose(fi);
+	fclose(foTriads);
+	fclose(foScanner);
+	exit(7);
+}

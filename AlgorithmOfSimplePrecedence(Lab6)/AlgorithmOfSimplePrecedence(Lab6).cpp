@@ -22,8 +22,7 @@ struct Symbol
 	Relation rel;
 	std::string id;
 	unsigned value;
-	int triadNumber = 0;
-	// Добавить поле номера триады
+	int triadNumber;
 	Symbol(char _symbol, Relation _rel, std::string _id, unsigned _value) : symbol(_symbol), rel(_rel), id(_id), value(_value) {}
 	Symbol() : symbol('\0'), rel(Relation{}), id(""), value(0) {}
 };
@@ -100,7 +99,7 @@ void fprintfTriads();
 void fprintfTriad(Triad triad);
 std::string toBinary(unsigned number);
 void OpenFile(FILE*& file, const char* fileName, const char* mode, const char* errorMessage);
-
+std::string numberToTriadNumber(int triadNumber);
 
 void Get(void)
 {
@@ -126,8 +125,6 @@ void GetLex(void)
 			Get();
 		}
 		c.symbol = 'I';
-		//addTriad(Triad('V', c.id, "¤"));
-		//Добавить переменную в список перменных
 	}
 	else if (cc == '0' || cc == '1')
 	{
@@ -140,7 +137,6 @@ void GetLex(void)
 			Get();
 		}
 		
-		//addTriad(Triad('C', buffer, "¤"));
 		c.symbol = 'C';
 		c.value = std::stoi(buffer, nullptr, 2);
 	}
@@ -173,6 +169,13 @@ Relation getRelation(char x, char y)
 }
 
 
+void popAndAssign(Symbol& target) {
+	if (!stack.empty()) {
+		target = stack.top();
+		stack.pop();
+	}
+}
+
 void OnReduce(int ruleNumber) {
 	if (ruleNumber < 0 || ruleNumber >= std::size(rules)) {
 		OnError("Invalid rule number", nullptr);
@@ -184,131 +187,113 @@ void OnReduce(int ruleNumber) {
 	Triad triad;
 
 	switch (ruleNumber) {
-	case 0:
+	case 0: // L -> _
 		return;
 
-	case 1:  // L -> LS
+	case 1: // L -> LS
 		newSymbol.symbol = 'L';
 		stack.pop(); // Удаляем S
 		stack.pop(); // Удаляем L
 		break;
 
-	case 2:  // L -> S
-		newSymbol = stack.top();
+	case 2: // L -> S
+		popAndAssign(newSymbol);
 		newSymbol.symbol = 'L';
-		stack.pop(); // Удаляем S
 		break;
 
-	case 3:  // S -> I=E;
+	case 3: // S -> I=E;
 		newSymbol.symbol = 'S';
 		stack.pop(); // Удаляем ';'
-		e = stack.top();
-		stack.pop(); // Удаляем E
+		popAndAssign(e);
 		stack.pop(); // Удаляем '='
-		i = stack.top();
-		stack.pop(); // Удаляем I
+		popAndAssign(i);
 
-		if (variables.count(i.id) != 0) {
-			variables[i.id] = e.value;
-		}
+		variables[i.id] = e.value;
+		i.triadNumber = triadNumber;
 
-		newSymbol.id = i.id;
-		newSymbol.value = e.value;
-
-		triad = Triad();
-		triad.operation = '=';
-		triad.operand1 = i.id;
-		triad.operand2 = !e.id.empty() ? e.id : toBinary(e.value);
-		addTriad(triad);
+		addTriad(Triad('V', i.id, "¤"));
+		addTriad(Triad('=', numberToTriadNumber(i.triadNumber), numberToTriadNumber(e.triadNumber)));
 		break;
 
-	case 4:  // E -> E|T
+	case 4: // E -> E|T
 		newSymbol.symbol = 'E';
-		t = stack.top();
-		stack.pop(); // Удаляем T
+		popAndAssign(t);
 		stack.pop(); // Удаляем '|'
-		e = stack.top();
-		stack.pop(); // Удаляем E
+		popAndAssign(e);
 
-		newSymbol.value = t.value | e.value;
-
-		triad = Triad('|',
-			e.id.empty() ? toBinary(e.value) : e.id,
-			t.id.empty() ? toBinary(t.value) : t.id);
+		triad = Triad('|', numberToTriadNumber(e.triadNumber), numberToTriadNumber(t.triadNumber));
+		newSymbol.triadNumber = triad.number;
 		addTriad(triad);
 		break;
 
-	case 5:  // E -> T
+	case 5: // E -> T
+		popAndAssign(t);
+		newSymbol = t;
 		newSymbol.symbol = 'E';
-		t = stack.top();
-		if (!t.id.empty()) newSymbol.id = t.id;
-		if (t.id.empty()) newSymbol.value = t.value;
-		stack.pop(); // Удаляем T
 		break;
 
-	case 6:  // T -> T&M
+	case 6: // T -> T&M
 		newSymbol.symbol = 'T';
-		m = stack.top();
-		stack.pop(); // Удаляем M
+		popAndAssign(m);
 		stack.pop(); // Удаляем '&'
-		t = stack.top();
-		stack.pop(); // Удаляем T
+		popAndAssign(t);
 
-		newSymbol.value = m.value & t.value;
-
-		triad = Triad('&',
-			t.id.empty() ? toBinary(t.value) : t.id,
-			m.id.empty() ? toBinary(m.value) : m.id);
+		newSymbol.value = t.value & m.value;
+		triad = Triad('&', numberToTriadNumber(t.triadNumber), numberToTriadNumber(m.triadNumber));
+		newSymbol.triadNumber = triad.number;
 		addTriad(triad);
 		break;
 
-	case 7:  // M -> ~M
+	case 7: // M -> ~M
 		newSymbol.symbol = 'M';
-		m = stack.top();
-		stack.pop(); // Удаляем M
+		popAndAssign(m);
 		stack.pop(); // Удаляем '~'
 
 		newSymbol.value = ~m.value;
-
-		triad = Triad('~',
-			m.id.empty() ? toBinary(m.value) : m.id,
-			"¤");
+		triad = Triad('~', numberToTriadNumber(m.triadNumber), "¤");
+		newSymbol.triadNumber = triad.number;
 		addTriad(triad);
 		break;
 
-	case 8:  // T -> M
+	case 8: // T -> M
+		popAndAssign(m);
+		newSymbol = m;
 		newSymbol.symbol = 'T';
-		m = stack.top();
-		newSymbol.value = m.value;
-		stack.pop(); // Удаляем M
 		break;
 
-	case 9:  // M -> (E)
-		newSymbol.symbol = 'M';
+	case 9: // M -> (E)
 		stack.pop(); // Удаляем ')'
-		e = stack.top();
-		stack.pop(); // Удаляем E
+		popAndAssign(e);
 		stack.pop(); // Удаляем '('
-		newSymbol.value = e.value;
+		newSymbol = e;
+		newSymbol.symbol = 'M';
 		break;
 
 	case 10: // M -> I
-		newSymbol = stack.top();
+		popAndAssign(newSymbol);
+
+		if (variables.count(newSymbol.id) == 0) {
+			OnError("Variable '%s' used before initialization", newSymbol.id.c_str());
+		}
 		newSymbol.symbol = 'M';
-		stack.pop(); // Удаляем I или C
-		addTriad(Triad('V', c.id, "¤"));
+
+		newSymbol.triadNumber = triadNumber;
+		addTriad(Triad('V', newSymbol.id, "¤"));
+		break;
+
 	case 11: // M -> C
-		newSymbol = stack.top();
+		popAndAssign(newSymbol);
 		newSymbol.symbol = 'M';
-		stack.pop(); // Удаляем I или C
-		addTriad(Triad('C', toBinary(c.value), "¤"));
+
+		newSymbol.triadNumber = triadNumber;
+		addTriad(Triad('C', toBinary(newSymbol.value), "¤"));
 		break;
 
 	default:
-		OnError("Wrong rule number", nullptr);
+		OnError("Unknown rule number", nullptr);
 		return;
 	}
-	
+
 	if (!stack.empty()) {
 		newSymbol.rel = getRelation(stack.top().symbol, newSymbol.symbol);
 	}
@@ -318,13 +303,15 @@ void OnReduce(int ruleNumber) {
 	stack.push(newSymbol);
 }
 
+
 int g() {
 	std::string omega;
 	int currentRuleNumber = -1;
 	std::stack<Symbol> tempStack = stack;
-	Symbol stackTop = tempStack.top();
 	
+	Symbol stackTop;
 	do {
+		stackTop = tempStack.top();
 		omega = tempStack.top().symbol + omega;
 		if (stackTop.rel == Dual || stackTop.rel == Before) {
 			for (int i = 0; i < std::size(rules); i++) {
@@ -338,22 +325,6 @@ int g() {
 	} while (!tempStack.empty() && stackTop.rel != Before);
 		
 	return currentRuleNumber;
-	//Rule not for all 
-	//std::stack<Symbol> tempStack = stack;
-	//while (!tempStack.empty()) {
-	//	omega = tempStack.top().symbol + omega;
-	//	tempStack.pop();
-	//}
-	// Последовательное считывание элементов с вершины
-	// стека при обнаружении <= сохранить метку, продолжить считывание 
-	// при выходе за макс размер правила вернуться в сохраненной метке
-
-	//for (int i = 0; i < std::size(rules); ++i) {
-	//	if (omega.size() >= rules[i].right.size() &&
-	//		omega.substr(omega.size() - rules[i].right.size()) == rules[i].right) {
-	//		return i;
-	//	}
-	//}
 }
 
 Action f() {
@@ -456,4 +427,8 @@ void OnError(const char* msg, const char* param)
 	fclose(foTriads);
 	fclose(foScanner);
 	exit(7);
+}
+
+std::string numberToTriadNumber(int triadNumber) {
+	return "^" + std::to_string(triadNumber);
 }
